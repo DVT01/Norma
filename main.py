@@ -1,4 +1,5 @@
 #  Automatically download images and post then to reddit
+__version__ = '20.05.10'
 
 from datetime import datetime, timedelta
 from os.path import join, isfile
@@ -180,6 +181,8 @@ def time_check():
 
 
 if __name__ == '__main__':
+
+    print(f'Norma version: {__version__}')
 
     reddit_client = praw.Reddit(
         client_id="ABkB7KIufNDtRA",
