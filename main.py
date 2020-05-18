@@ -1,10 +1,12 @@
 #  Automatically download images and post then to reddit
-__version__ = '20.05.10'
+__version__ = '20.05.18'
 
+from os.path import join, isfile, dirname, realpath
 from datetime import datetime, timedelta
-from os.path import join, isfile
 from bs4 import BeautifulSoup
 import concurrent.futures
+from os import makedirs
+from json import load
 import requests
 import praw
 import time
@@ -13,8 +15,7 @@ import time
 def get_images(wallpapers_link, post_type):
 
     # Go to wallpaperscraft front page while sorting by ratings and 4k
-    wallpapers_source = requests.get(wallpapers_link).text
-    wallpapers_soup = BeautifulSoup(wallpapers_source, 'lxml')
+    wallpapers_soup = BeautifulSoup(requests.get(wallpapers_link).text, 'lxml')
 
     print(f'{post_type} -> Went to wallpaperscraft')
 
@@ -31,6 +32,7 @@ def get_images(wallpapers_link, post_type):
     wallpaper_source = list()
 
     for image_page in wallpapers_page:
+        time.sleep(1)
         image_page_soup = BeautifulSoup(requests.get(image_page).text, 'lxml')
 
         # Get download link of every picture
@@ -38,15 +40,17 @@ def get_images(wallpapers_link, post_type):
 
         # Get the source for each wallpaper
         try:
-            wallpaper_source.append([
+            _wallpaper_source = [
                 image_page_soup.find_all('div', 'author__row')[0].text.replace('Author: ', ''),
                 image_page_soup.find('a', 'author__link')['href'],
-            ])
+            ]
         except TypeError:
-            wallpaper_source.append([
+            _wallpaper_source = [
                 None,
                 None,
-            ])
+            ]
+
+        wallpaper_source.append(_wallpaper_source)
 
     print(f'{post_type} -> Finished getting links of images')
 
@@ -103,7 +107,7 @@ def post_picture(title, directory, download_link, subreddit, author, author_link
 
     for user_post in user_submissions:
         if title in user_post.title and subreddit == user_post.subreddit:
-            print(f'{title} already posted.')
+            print(f'{post_type} -> {title} already posted.')
             return -1
 
     print(f'{post_type} -> Posting {title}.')
@@ -129,6 +133,8 @@ def post_picture(title, directory, download_link, subreddit, author, author_link
 
 
 def complete_process(wallpapers_link, subreddit, folder, post_type):
+
+    makedirs(folder, exist_ok=True)
     wallpaper_subreddit = reddit_client.subreddit(subreddit)
     current_page = 0
 
@@ -145,7 +151,11 @@ def complete_process(wallpapers_link, subreddit, folder, post_type):
         print(f'{post_type} -> Took {(time.time() - start):.2f} seconds to finish complete process to get wallpapers.')
 
         for title, attributes in images.items():
-            time_check()
+
+            # Wait until it is within the required time
+            while not within_time():
+                print(f'{post_type} -> Waiting to be within time.')
+                time.sleep(60)
 
             if post_picture(
                 title,
@@ -163,47 +173,30 @@ def complete_process(wallpapers_link, subreddit, folder, post_type):
             time.sleep(1800)
 
 
-def time_check():
-    not_within_time = True
+def within_time():
+    now = datetime.now()
+    now_formatted = now.strftime("%d%b%Y - %H:%M").upper()
+    start_time = datetime(now.year, now.month, now.day, hour=6)
+    end_time = datetime(now.year, now.month, now.day, hour=20)
 
-    while not_within_time:
-        now = datetime.now()
-        now_formatted = now.strftime("%d%b%Y - %H:%M").upper()
-        start_time = datetime(now.year, now.month, now.day, hour=6)
-        end_time = datetime(now.year, now.month, now.day, hour=20)
-
-        if start_time < now < end_time:
-            not_within_time = False
-            print(f'{now_formatted} within time.')
-        else:
-            print(f'{now_formatted} not within time.')
-            time.sleep(60)
+    if start_time < now < end_time:
+        print(f'{now_formatted} within time.')
+        return True
+    else:
+        print(f'{now_formatted} not within time.')
+        return False
 
 
-if __name__ == '__main__':
+def sort_user_submissions():
+    # Get all subreddits used in the configuration file
+    with open('configuration.json', 'r') as _file:
+        subreddits_used = [
+            _subreddit['subreddit']
+            for _subreddit in load(_file).values()
+        ]
 
-    print(f'Norma version: {__version__}')
-
-    reddit_client = praw.Reddit(
-        client_id="ABkB7KIufNDtRA",
-        client_secret="vtXU6L3bKvji-Dsr9evOn35Vqq4",
-        user_agent="Python:Norma:v20.5.03 (by /u/DVT01)",
-        username="<your-reddit-username>",
-        password="<your-reddit-password>",
-    )
-
-    reddit_client.validate_on_submit = True
-    user = reddit_client.user.me()
-
-    # Make sure we got connection
-    if user != '<your-reddit-username>':
-        print('ERROR!')
-        exit()
-
-    # Scan and use the user submissions necessary
-    st_time = time.time()
-
-    user_submissions = list()
+    # Sort all user posts
+    _user_submissions = list()
     for post_id in user.submissions.new(limit=None):
 
         post = praw.reddit.models.Submission(
@@ -211,38 +204,46 @@ if __name__ == '__main__':
             id=post_id
         )
 
-        if post.subreddit in ['wallpaper', 'iWallpaper']:
-            user_submissions.append(post)
+        if post.subreddit in subreddits_used:
+            _user_submissions.append(post)
 
+    return _user_submissions
+
+
+if __name__ == '__main__':
+
+    print(f'Norma version: {__version__}')
+
+    # Connect to reddit
+    reddit_client = praw.Reddit(
+        client_id="ABkB7KIufNDtRA",
+        client_secret="vtXU6L3bKvji-Dsr9evOn35Vqq4",
+        user_agent="Python:Norma:v20.5.03 (by /u/DVT01)",
+        username="<your-username>",
+        password="<your-password>",
+    )
+
+    reddit_client.validate_on_submit = True
+    user = reddit_client.user.me()
+    file_path = dirname(realpath(__file__))
+    processes_terminated = True
+
+    # Make sure we got connection
+    if user != '<your-username>':
+        print('ERROR!')
+        exit()
+
+    st_time = time.time()
+    user_submissions = sort_user_submissions()
     print(f'Took {time.time() - st_time} seconds to sort all the user submissions.')
 
-    # Desktop wallpapers
-    desktop_subreddit = 'wallpaper'
-    desktop_download_directory = r'C:\Users\DVT\My Files\Projects\Norma (Reddit)\Desktop Images'
-    desktop_wallpapers_link = 'https://wallpaperscraft.com/all/ratings/3840x2160/page'
-    desktop_type = 'Desktop Photo'
-
-    # Phone wallpapers
-    phone_subreddit = 'iWallpaper'
-    phone_download_directory = r'C:\Users\DVT\My Files\Projects\Norma (Reddit)\Phone Images'
-    phone_wallpapers_link = 'https://wallpaperscraft.com/all/ratings/2160x3840/page'
-    phone_type = 'Phone Photo'
-
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.submit(
-            complete_process,
-
-            desktop_wallpapers_link,
-            desktop_subreddit,
-            desktop_download_directory,
-            desktop_type,
-        )
-
-        executor.submit(
-            complete_process,
-
-            phone_wallpapers_link,
-            phone_subreddit,
-            phone_download_directory,
-            phone_type,
-        )
+        with open('configuration.json', 'r') as file:
+            for process_type, process_attributes in load(file).items():
+                executor.submit(
+                    complete_process,
+                    process_attributes['wallpaper_link'],
+                    process_attributes['subreddit'],
+                    join(file_path, process_attributes['folder']),
+                    process_type,
+                )
